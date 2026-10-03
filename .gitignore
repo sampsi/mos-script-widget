@@ -1,0 +1,4 @@
+node_modules/
+dist/
+*.deb
+*.deb.md5

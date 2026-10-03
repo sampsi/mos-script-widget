@@ -1,0 +1,75 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - '[0-9]*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 0.1.0)'
+        required: true
+        default: '0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build Vue plugin
+        working-directory: page
+        env:
+          PLUGIN_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: npm install && npm run build
+
+      - name: Build .deb package
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          PKG_DIR="script-widget-${VERSION}-1+mos-plugin_all"
+          DEB_FILE="script-widget-${VERSION}-1+mos-plugin_all.deb"
+
+          mkdir -p ${PKG_DIR}/var/www/mos-plugins/script-widget ${PKG_DIR}/DEBIAN
+          cp -R page/dist/script-widget/* ${PKG_DIR}/var/www/mos-plugins/script-widget/
+          cp icon.png ${PKG_DIR}/var/www/mos-plugins/script-widget/
+
+          cat > ${PKG_DIR}/DEBIAN/control << CONTROL
+          Package: script-widget
+          Version: ${VERSION}-1+mos-plugin
+          Architecture: all
+          Maintainer: sampsi
+          Description: Script runner dashboard widget plugin for MOS (run your own scripts from the dashboard)
+          CONTROL
+          sed -i 's/^ *//' ${PKG_DIR}/DEBIAN/control
+
+          dpkg-deb --root-owner-group --build ${PKG_DIR} ${DEB_FILE}
+          md5sum ${DEB_FILE} | awk '{print $1}' > ${DEB_FILE}.md5
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: Script Widget ${{ steps.version.outputs.VERSION }}
+          files: |
+            script-widget-${{ steps.version.outputs.VERSION }}-1+mos-plugin_all.deb
+            script-widget-${{ steps.version.outputs.VERSION }}-1+mos-plugin_all.deb.md5
